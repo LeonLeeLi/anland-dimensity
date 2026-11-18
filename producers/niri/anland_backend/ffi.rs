@@ -128,6 +128,7 @@ extern "C" {
     pub fn anland_niri_drop_session(bridge: *mut Bridge);
     pub fn anland_niri_output_info(bridge: *mut Bridge, out: *mut Output) -> c_int;
     pub fn anland_niri_get_target(bridge: *mut Bridge, out: *mut Target) -> c_int;
+    pub fn anland_niri_write_rgba8(target: *const Target, pixels: *const u8, size: usize) -> c_int;
     pub fn anland_niri_submit(
         bridge: *mut Bridge,
         generation: u64,

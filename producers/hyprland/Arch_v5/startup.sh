@@ -12,6 +12,7 @@ export PATH="$PREFIX/bin:$PATH"
 export ANLAND=1
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || die 'Hyprland requires a GBM render node. Use virtio-gpu.'
 export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
 # Explicit session logging, without rewriting the user configuration.
 if [[ ${1:-} == --diagnose ]]; then

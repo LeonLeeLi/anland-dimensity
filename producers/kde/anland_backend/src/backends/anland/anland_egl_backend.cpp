@@ -25,6 +25,8 @@
 #include "utils/filedescriptor.h"
 
 #include <drm_fourcc.h>
+#include <cstring>
+#include <limits>
 #include <unistd.h>
 
 #ifndef EGL_PLATFORM_SURFACELESS_MESA
@@ -88,12 +90,17 @@ void AnlandEglLayer::releaseBuffers()
     for (int i = 0; i < ANLAND_DEVICE_MAX_BUFS; i++) {
         m_fbos[i].reset();
         m_textures[i].reset();
+        if (m_readbackBuffers[i]) {
+            close(m_readbackBuffers[i]->fd);
+            m_readbackBuffers[i].reset();
+        }
         #ifdef ANLAND_KWIN_66
         m_accumDamage[i] = Region();
 #else
         m_accumDamage[i] = QRegion();
 #endif
     }
+    m_readbackPixels.clear();
     m_hdrEncoder.reset();
     m_hdrFbo.reset();
     m_hdrTexture.reset();
@@ -156,6 +163,7 @@ bool AnlandEglLayer::importBuffers(int count)
 
     releaseBuffers();
 
+    const bool readback = qgetenv("ANLAND_RENDERER") == "virgl-vtest";
     bool consumerHdr = false;
     for (int i = 0; i < count; i++) {
         anland_device_fb_t fb;
@@ -201,28 +209,35 @@ bool AnlandEglLayer::importBuffers(int count)
             releaseBuffers();
             return false;
         }
-        DmaBufAttributes attrs;
-        attrs.planeCount = 1;
-        attrs.width = actual.width();
-        attrs.height = actual.height();
-        attrs.format = anlandProtocolFormatToDrm(fb.format);
-        attrs.modifier = fb.modifier;
-        // anland_device_get_fb() returns a caller-owned dup of the dmabuf fd;
-        // DmaBufAttributes (and the EGLImage we hand the fd to) takes it over.
-        attrs.fd[0] = FileDescriptor(fb.fd);
-        attrs.offset[0] = static_cast<int>(fb.offset);
-        attrs.pitch[0] = static_cast<int>(fb.stride);
-
-        // EglBackend::importDmaBufAsTexture() builds the EGLImage and wraps it in
-        // a GLTexture in one step (the 5.27-era manual EGLImageKHR +
-        // EGLImageTexture(...) dance is gone in 6.x).
+        std::shared_ptr<GLTexture> texture;
+        if (readback) {
+            if (consumerHdr || fb.modifier != DRM_FORMAT_MOD_LINEAR || fb.width > fb.stride / 4) {
+                qCWarning(KWIN_ANLAND) << "VirGL vtest requires linear SDR consumer buffers";
+                close(fb.fd);
+                releaseBuffers();
+                return false;
+            }
+            m_readbackBuffers[i] = fb;
+            texture = GLTexture::allocate(GL_RGBA8, actual);
+        } else {
+            DmaBufAttributes attrs;
+            attrs.planeCount = 1;
+            attrs.width = actual.width();
+            attrs.height = actual.height();
+            attrs.format = anlandProtocolFormatToDrm(fb.format);
+            attrs.modifier = fb.modifier;
+            attrs.fd[0] = FileDescriptor(fb.fd);
+            attrs.offset[0] = static_cast<int>(fb.offset);
+            attrs.pitch[0] = static_cast<int>(fb.stride);
 #ifdef ANLAND_KWIN_68
-        std::shared_ptr<GLTexture> texture = m_backend->openglContext()->importDmaBufAsTexture(attrs);
+            texture = m_backend->openglContext()->importDmaBufAsTexture(attrs);
 #else
-        std::shared_ptr<GLTexture> texture = m_backend->importDmaBufAsTexture(attrs);
+            texture = m_backend->importDmaBufAsTexture(attrs);
 #endif
+        }
         if (!texture) {
-            qCWarning(KWIN_ANLAND) << "failed to import dmabuf" << i << "as texture";
+            qCWarning(KWIN_ANLAND) << "failed to create texture for Anland buffer" << i
+                                   << (readback ? "using offscreen allocation" : "failed to import dmabuf");
             releaseBuffers();
             return false;
         }
@@ -239,8 +254,8 @@ bool AnlandEglLayer::importBuffers(int count)
             return false;
         }
 
-        qCDebug(KWIN_ANLAND) << "imported buffer" << i << "fd" << fb.fd << actual
-                             << "fmt" << Qt::hex << attrs.format << "mod" << attrs.modifier;
+        qCDebug(KWIN_ANLAND) << "prepared buffer" << i << actual
+                             << "fmt" << Qt::hex << anlandProtocolFormatToDrm(fb.format) << "mod" << fb.modifier;
 
         m_textures[i] = std::move(texture);
         m_fbos[i] = std::move(fbo);
@@ -275,6 +290,9 @@ bool AnlandEglLayer::importBuffers(int count)
         m_hdrTexture->setContentTransform(finalTransform);
     }
     m_bufCount = count;
+    if (readback) {
+        qCInfo(KWIN_ANLAND) << "VirGL vtest: presenting via SDR readback";
+    }
 #ifdef ANLAND_KWIN_66
     addDeviceRepaint(ANLAND_FULL_REPAINT);
 #else
@@ -418,6 +436,29 @@ bool AnlandEglLayer::encodeHdrFrame(const QRegion &deviceDamage)
     return encoded;
 }
 
+bool AnlandEglLayer::copySdrFrame()
+{
+    const auto &buffer = *m_readbackBuffers[m_currentIndex];
+    const uint64_t size = uint64_t(buffer.width) * buffer.height * 4;
+    if (size > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    m_readbackPixels.resize(static_cast<int>(size));
+    GLFramebuffer::pushFramebuffer(m_fbos[m_currentIndex].get());
+    glReadPixels(0, 0, buffer.width, buffer.height, GL_RGBA, GL_UNSIGNED_BYTE, m_readbackPixels.data());
+    GLFramebuffer::popFramebuffer();
+    if (checkGLError("Anland VirGL readback")) {
+        return false;
+    }
+    const int result = anland_device_write_rgba8(&buffer,
+        reinterpret_cast<const uint8_t *>(m_readbackPixels.constData()), m_readbackPixels.size());
+    if (result < 0) {
+        qCWarning(KWIN_ANLAND) << "failed to write VirGL frame into consumer DMA-BUF:" << std::strerror(-result);
+        return false;
+    }
+    return true;
+}
+
 #ifdef ANLAND_KWIN_68
 bool AnlandEglLayer::endFrame(const Region &renderedDeviceRegion, const Region &damagedDeviceRegion, OutputFrame *frame)
 #elif defined(ANLAND_KWIN_66)
@@ -430,6 +471,11 @@ bool AnlandEglLayer::doEndFrame(const QRegion &renderedDeviceRegion, const QRegi
     // frames. HDR scene damage and this slot history have different lifetimes.
     for (int i = 0; i < m_bufCount; i++) {
         m_accumDamage[i] = m_accumDamage[i] + damagedDeviceRegion;
+    }
+    const bool readback = m_readbackBuffers[m_currentIndex].has_value();
+    if (readback && !copySdrFrame()) {
+        m_accumDamage[m_currentIndex] = ANLAND_FULL_REPAINT;
+        return false;
     }
     if (m_output->hdrEnabled()) {
         // Include repairs requested for the scene itself (first use/rotation),
@@ -448,6 +494,11 @@ bool AnlandEglLayer::doEndFrame(const QRegion &renderedDeviceRegion, const QRegi
 #else
         m_accumDamage[m_currentIndex] = QRegion();
 #endif
+    }
+
+    if (readback) {
+        setPendingFence(-1);
+        return true;
     }
 
     // Wait until the consumer publishes its next target before scheduling a

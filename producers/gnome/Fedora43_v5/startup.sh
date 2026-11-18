@@ -9,6 +9,7 @@ mode=run
 [[ ${1:-} != --check ]] || { mode=check; shift; }
 [[ $# -le 1 ]] || die 'expected at most one Anland socket'
 export ANLAND=1 ANLAND_SOCKET=${1:-${ANLAND_SOCKET:-/run/display.sock}}
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || die 'Mutter requires a DRM render node. Use virtio-gpu.'
 export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
 export XWAYLAND_GBM_DEVICE=${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}

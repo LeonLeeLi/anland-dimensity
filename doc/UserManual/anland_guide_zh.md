@@ -76,7 +76,7 @@ PRoot 用户请阅读 [Anland: Termux 中文用户指南](https://github.com/lfd
 
 - **支持 Anland 的合成器。** 普通发行版自带的 KWin 或 Mutter 不含 Anland 后端，需安装项目提供的补丁版本。
 
-- **GPU 设备和驱动可用。** 推荐 Snapdragon / Adreno，并确保 Linux 环境能访问 `/dev/dri/renderD128` 及对应的 KGSL/Mesa 驱动。其他平台的支持取决于驱动，可能只能软件渲染或无法启动桌面。
+- **渲染环境可用。** Snapdragon / Adreno 需要可访问的渲染节点（通常是 `/dev/dri/renderD128`）和匹配的 KGSL/Mesa 驱动。软件回退取决于 producer 能否在没有 DRM 节点时初始化，以及能否写入 Android 的画面缓冲区。
 
 - **组件版本兼容。** 协议更新时，Android 应用和 producer 可能需要一起更新。chroot 使用的独立 daemon 也应与其他组件版本接近。
 
@@ -431,10 +431,24 @@ printf '%s\n' "$ANLAND_SOCKET"
 
 ### 桌面启动失败或只能软件渲染
 
-先确认 Linux 环境可以访问 `/dev/dri/renderD128`。Adreno 设备还需要可用的 KGSL 节点和匹配的 Mesa 驱动。
+先看合成器日志。若程序打开 DRM 渲染节点失败后直接退出，Mesa 还没有机会回退到软件渲染。Adreno 设备还需要可用的 KGSL 节点和匹配的 Mesa 驱动。
 
 - **Droidspaces：** 复查 GPU/硬件访问设置。
 - **chroot：** 检查设备节点挂载和用户权限。
+
+### 没有 DRM 渲染节点时
+
+Ubuntu 26.04 的 KDE 和 Niri 可以在没有 DRM 渲染节点时初始化 surfaceless EGL。只暴露 `/dev/mali0` 的 Mali 设备可以由 Mesa 选择 llvmpipe。默认输出仍然要求 EGL 能导入并写入 Android 提供的 DMA-BUF。
+
+使用 VirGL vtest 时，先在宿主端启动兼容的渲染服务，并把它的 Unix socket 映射到容器。从项目根目录用 `eglinfo` 确认 surfaceless 平台的渲染器显示 VirGL，再启动打过补丁的合成器。请先关闭 Android 应用里的 10 位 HDR。KDE 和 Niri 在此模式下离屏渲染，并把 SDR 像素拷贝到可由 CPU 映射的线性 DMA-BUF。
+
+```sh
+producers/common/anland-virgl.sh --vtest /run/virgl.sock -- eglinfo -B
+producers/common/anland-virgl.sh --vtest /run/virgl.sock -- bash producers/kde/ubuntu2604_v5/startup.sh
+ANLAND_START_NIRI=YES producers/common/anland-virgl.sh --vtest /run/virgl.sock -- bash producers/niri/Ubuntu2604_v5/startup.sh
+```
+
+已有 virtio-gpu 渲染节点时，用 `anland-virgl.sh --drm /dev/dri/renderD128 -- bash path/to/startup.sh` 选择设备。GNOME、Hyprland、Mango 和 Denial 仍需要 DRM/GBM 和兼容的缓冲区导入。Gamescope 还需要支持外部 DMA-BUF 的 Vulkan 驱动，VirGL 的 OpenGL 支持本身无法满足这个要求。
 
 ### KDE Plasma 明显卡顿
 

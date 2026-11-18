@@ -78,7 +78,7 @@ Before you begin, confirm the following:
 
 - **An Anland-enabled compositor.** Stock KWin and Mutter packages do not include the Anland backend. Install a patched version supplied by the project.
 
-- **Working GPU devices and drivers.** Snapdragon/Adreno devices are recommended. Linux must expose `/dev/dri/renderD128` and the corresponding KGSL/Mesa drivers. Other platforms may be limited to software rendering or may not start the desktop, depending on driver support.
+- **Working rendering stack.** Snapdragon/Adreno deployments use an accessible render node, usually `/dev/dri/renderD128`, and matching KGSL/Mesa drivers. Software fallback depends on whether the producer can initialize without DRM and write the Android consumer buffers.
 
 - **Compatible component versions.** A protocol update may require updating the Android app and producer together. The standalone chroot daemon should also be from a similar release period; avoid mixing components from widely separated versions.
 
@@ -437,10 +437,24 @@ Common causes include:
 
 ### The desktop fails to start or uses only software rendering
 
-First confirm that the Linux environment can access `/dev/dri/renderD128`. Adreno devices also need an available KGSL node and matching Mesa drivers.
+Check the compositor log first. A compositor can fail while opening a DRM render node, before Mesa can fall back to software. Adreno devices also need an available KGSL node and matching Mesa drivers.
 
 - **Droidspaces:** recheck GPU/Hardware Access settings.
 - **chroot:** check device-node mounts and user permissions.
+
+### Rendering without a DRM node
+
+Ubuntu 26.04 KDE and Niri can initialize surfaceless EGL without a DRM render node. Mesa can select llvmpipe on Mali devices that expose only `/dev/mali0`. Default output still requires EGL to import and render into the Android consumer's DMA-BUFs.
+
+For VirGL vtest, start a compatible renderer service on the host and map its Unix socket into the container. From the repository root, check that `eglinfo` reports VirGL for the surfaceless platform and then start the patched producer. Turn off 10-bit HDR in the Android app. KDE and Niri use offscreen rendering in this mode and copy SDR pixels into CPU-mappable linear DMA-BUFs.
+
+```sh
+producers/common/anland-virgl.sh --vtest /run/virgl.sock -- eglinfo -B
+producers/common/anland-virgl.sh --vtest /run/virgl.sock -- bash producers/kde/ubuntu2604_v5/startup.sh
+ANLAND_START_NIRI=YES producers/common/anland-virgl.sh --vtest /run/virgl.sock -- bash producers/niri/Ubuntu2604_v5/startup.sh
+```
+
+With a real virtio-gpu render node, use `anland-virgl.sh --drm /dev/dri/renderD128 -- bash path/to/startup.sh` to select the device. GNOME, Hyprland, Mango and Denial require DRM/GBM and compatible consumer buffer imports. Gamescope also needs a Vulkan driver with external DMA-BUF support. VirGL OpenGL support alone does not meet that requirement.
 
 ### KDE Plasma is noticeably sluggish
 

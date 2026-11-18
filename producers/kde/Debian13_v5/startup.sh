@@ -3,7 +3,11 @@
 # daemon directly through its built-in "anland" backend (--anland / $ANLAND_SOCKET).
 # There is no weston layer and no nested kwin — kwin replaces both. The patched
 # kwin_wayland package must be installed first (see build.sh).
-SOCK="${1:-/run/display.sock}"
+SOCK="${1:-${ANLAND_SOCKET:-/run/display.sock}}"
+if [ "${ANLAND_RENDERER:-}" = virgl-vtest ]; then
+    echo 'This compositor recipe requires a DRM render node. Use virtio-gpu.' >&2
+    exit 1
+fi
 
 # Never tear down an existing graphical session automatically.
 for process in kwin_wayland kwin_x11 plasmashell startplasma-wayland; do
@@ -18,12 +22,15 @@ mkdir -p "$XDG_RUNTIME_DIR"; chmod 0700 "$XDG_RUNTIME_DIR"
 unset DISPLAY
 export ANLAND_SOCKET="$SOCK"
 export ANLAND=1
-export ANLAND_DRM_DEVICE=/dev/dri/renderD128
+export ANLAND_DRM_DEVICE="${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}"
 # Anland always composites client dmabufs through EGL. Let the GPU's implicit
 # synchronization wait at sampling time instead of exporting and polling one
 # sync_file per high-rate Wayland mailbox commit in KWin's main thread.
-export ANLAND_SKIP_IMPLICIT_SYNC_WAIT=1
-export MESA_LOADER_DRIVER_OVERRIDE=kgsl GALLIUM_DRIVER=kgsl FD_FORCE_KGSL=1
+if [ -c /dev/kgsl-3d0 ] && [ -z "${ANLAND_RENDERER:-}" ]; then
+    export ANLAND_SKIP_IMPLICIT_SYNC_WAIT="${ANLAND_SKIP_IMPLICIT_SYNC_WAIT:-1}"
+    export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
+    export GALLIUM_DRIVER="${GALLIUM_DRIVER:-kgsl}" FD_FORCE_KGSL="${FD_FORCE_KGSL:-1}"
+fi
 export QT_QPA_PLATFORM=wayland
 # Tell xdg-desktop-portal this is a KDE session, so it loads the kde backend and
 # kde-portals.conf. Without this, portal detection falls back to the gtk backend,

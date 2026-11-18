@@ -113,6 +113,7 @@ if [[ -n "$socket_arg" ]]; then
 fi
 export ANLAND_SOCKET="${ANLAND_SOCKET:-/run/display.sock}"
 
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || fail 'Denial requires a GBM render node. Use virtio-gpu.'
 render="${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}"
 [[ -c "$render" && -r "$render" && -w "$render" ]] || fail "render node is not accessible: $render"
 export ANLAND_DRM_DEVICE="$render"

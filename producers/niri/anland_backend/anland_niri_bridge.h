@@ -45,6 +45,8 @@ void anland_niri_drop_session(anland_niri_bridge *bridge);
 int anland_niri_output_info(anland_niri_bridge *bridge, anland_niri_output *out);
 /* The target fd belongs to the caller; generation must be rechecked at submit. */
 int anland_niri_get_target(anland_niri_bridge *bridge, anland_niri_target *out);
+int anland_niri_write_rgba8(const anland_niri_target *target,
+                           const uint8_t *pixels, size_t size);
 /* The fence is BORROWED; submit duplicates it when necessary. */
 int anland_niri_submit(anland_niri_bridge *bridge, uint64_t generation,
                        uint32_t index, int acquire_fence_fd, uint64_t *commit_id);

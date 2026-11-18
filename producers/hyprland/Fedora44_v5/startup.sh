@@ -7,6 +7,7 @@ export HYPRLAND_ANLAND_LIBDIR=${HYPRLAND_ANLAND_LIBDIR:-$base/lib}
 export LD_LIBRARY_PATH="$HYPRLAND_ANLAND_LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="$base/bin:$PATH"
 export ANLAND=1 ANLAND_SOCKET=${ANLAND_SOCKET:-/run/display.sock}
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || die 'Hyprland requires a GBM render node. Use virtio-gpu.'
 export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
 export XWAYLAND_GBM_DEVICE=${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}
 export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=Hyprland

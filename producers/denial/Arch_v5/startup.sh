@@ -65,6 +65,7 @@ if [[ $mode == check ]]; then
 elif [[ ! -S "$ANLAND_SOCKET" ]]; then
     printf 'denial: daemon socket not ready (%s); the compositor will keep retrying.\n' "$ANLAND_SOCKET" >&2
 fi
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || fail 'Denial requires a GBM render node. Use virtio-gpu.'
 render="${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}"
 [[ -c "$render" && -r "$render" && -w "$render" ]] || fail "Render device is not accessible: $render"
 # Preserve the caller's proven Mesa/GBM settings; never change clocks or drivers.

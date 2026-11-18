@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Launch an Anland GNOME session explicitly; never stop an existing session.
 set -euo pipefail
-sock=${1:-/run/display.sock}
+sock=${1:-${ANLAND_SOCKET:-/run/display.sock}}
+if [[ ${ANLAND_RENDERER:-} == virgl-vtest ]]; then
+  echo 'Mutter requires a DRM render node. Use virtio-gpu.' >&2
+  exit 1
+fi
 [[ -S $sock ]] || { echo "Display socket missing: $sock" >&2; exit 1; }
 for name in gnome-shell gnome-session mutter; do
   if pgrep -u "$(id -u)" -f "(^|/)${name}([[:space:]]|$)" >/dev/null; then
@@ -18,10 +22,12 @@ export ANLAND=1 ANLAND_SOCKET=$sock
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=gnome XDG_CURRENT_DESKTOP=GNOME
 export GNOME_SHELL_SESSION_MODE=gnome WAYLAND_DISPLAY=wayland-anland GNOME_WAYLAND_DISPLAY=wayland-anland
 export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
-export MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}
-export TURNIP_KMD=${TURNIP_KMD:-kgsl}
-export GALLIUM_DRIVER=${GALLIUM_DRIVER:-freedreno}
-export FD_FORCE_KGSL=${FD_FORCE_KGSL:-1}
+if [[ -c /dev/kgsl-3d0 && -z ${ANLAND_RENDERER:-} ]]; then
+  export MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}
+  export TURNIP_KMD=${TURNIP_KMD:-kgsl}
+  export GALLIUM_DRIVER=${GALLIUM_DRIVER:-freedreno}
+  export FD_FORCE_KGSL=${FD_FORCE_KGSL:-1}
+fi
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 [[ -d $XDG_RUNTIME_DIR && -w $XDG_RUNTIME_DIR ]] || {
   echo "Usable XDG_RUNTIME_DIR required: $XDG_RUNTIME_DIR" >&2; exit 1;

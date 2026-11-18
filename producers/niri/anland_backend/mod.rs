@@ -28,13 +28,13 @@ use smithay::backend::allocator::{Fourcc, Modifier};
 use smithay::backend::egl::native::EGLSurfacelessDisplay;
 use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
 use smithay::backend::renderer::damage::{OutputDamageTracker, RenderOutputResult};
-use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::backend::renderer::{Bind, Color32F, ImportDma};
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
+use smithay::backend::renderer::{Bind, Color32F, ExportMem, ImportDma, Offscreen};
 use smithay::desktop::utils::OutputPresentationFeedback;
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
-use smithay::utils::Size;
+use smithay::utils::{Rectangle, Size};
 use smithay::wayland::dmabuf::{DmabufFeedbackBuilder, DmabufGlobal};
 use smithay::wayland::presentation::Refresh;
 use smithay::wayland::pointer_constraints::with_pointer_constraint;
@@ -103,7 +103,7 @@ fn egl_device_for_env() -> Option<EGLDevice> {
 }
 
 fn create_egl_display() -> anyhow::Result<EGLDisplay> {
-    if let Some(device) = egl_device_for_env() {
+    if let Some(device) = (!virgl_vtest()).then(egl_device_for_env).flatten() {
         match unsafe { EGLDisplay::new(device) } {
             Ok(display) => {
                 info!("anland: created EGL display from a device");
@@ -117,6 +117,10 @@ fn create_egl_display() -> anyhow::Result<EGLDisplay> {
     let display = unsafe { EGLDisplay::new(EGLSurfacelessDisplay) }
         .context("error creating EGL display (surfaceless)")?;
     Ok(display)
+}
+
+fn virgl_vtest() -> bool {
+    std::env::var_os("ANLAND_RENDERER").as_deref() == Some(std::ffi::OsStr::new("virgl-vtest"))
 }
 
 fn duration_to_micros(duration: Duration) -> u64 {
@@ -360,6 +364,9 @@ impl Anland {
     /// feedback global, so that EGL clients (zink) can create a hardware
     /// DRI2 screen instead of falling back to llvmpipe.
     fn create_dmabuf_global(&mut self, niri: &mut Niri) {
+        if virgl_vtest() {
+            return;
+        }
         let Some(renderer) = self.renderer.as_mut() else {
             warn!("anland: no renderer, skipping dmabuf global");
             return;
@@ -991,10 +998,15 @@ impl Anland {
 
         let render_start = get_monotonic_time();
 
-        let mut dmabuf = match self.consumer_dmabufs[idx as usize].take() {
-            Some(dmabuf) => dmabuf,
-            None => {
-                let dup = match target.fd.try_clone() {
+        let readback = virgl_vtest();
+        let consumer_target = &target;
+        let mut dmabuf = if readback {
+            None
+        } else {
+            let dmabuf = if let Some(dmabuf) = self.consumer_dmabufs[idx as usize].take() {
+                dmabuf
+            } else {
+                let dup = match consumer_target.fd.try_clone() {
                     Ok(fd) => fd,
                     Err(err) => { warn!("anland: dup dmabuf fd: {err}"); return RenderResult::Skipped; }
                 };
@@ -1017,8 +1029,12 @@ impl Anland {
                         return RenderResult::Skipped;
                     }
                 }
-            }
+            };
+            Some(dmabuf)
         };
+
+        let mut offscreen: Option<GlesTexture> = None;
+        let region = Rectangle::from_size(Size::from(buffer_size));
 
         // Build the render elements for this output.
         let ctx = RenderCtx {
@@ -1034,7 +1050,7 @@ impl Anland {
         // clients flicker. A real age lets the damage tracker redraw only what
         // actually changed.
         let frame = self.frame_seq;
-        let age = if self.buffer_last_rendered_frame[idx as usize] == u64::MAX {
+        let age = if readback || self.buffer_last_rendered_frame[idx as usize] == u64::MAX {
             0
         } else {
             frame.wrapping_sub(self.buffer_last_rendered_frame[idx as usize]) as usize
@@ -1044,7 +1060,24 @@ impl Anland {
 
         // Render them into the consumer's dmabuf.
         let damage_tracker = self.damage_tracker.as_mut().unwrap();
-        let mut target = match renderer.bind(&mut dmabuf) {
+        let mut target = match if let Some(dmabuf) = dmabuf.as_mut() {
+            renderer.bind(dmabuf)
+        } else {
+            if info.modifier != 0 || info.width > info.stride / 4 ||
+                u64::from(info.width) * u64::from(info.height) > (i32::MAX / 4) as u64
+            {
+                warn!("anland: VirGL vtest requires linear SDR buffers");
+                return RenderResult::Skipped;
+            }
+            let texture = match renderer.create_buffer(Fourcc::Abgr8888, region.size) {
+                Ok(texture) => texture,
+                Err(err) => {
+                    warn!("anland: VirGL offscreen allocation failed: {err}");
+                    return RenderResult::Skipped;
+                }
+            };
+            renderer.bind(offscreen.insert(texture))
+        } {
             Ok(target) => target,
             Err(err) => {
                 warn!("anland: error binding dmabuf: {err}");
@@ -1065,11 +1098,24 @@ impl Anland {
                 warn!("anland: error rendering to dmabuf: {err}");
                 self.buffer_last_rendered_frame[idx as usize] = u64::MAX;
                 drop(target);
-                self.consumer_dmabufs[idx as usize] = Some(dmabuf);
+                self.consumer_dmabufs[idx as usize] = dmabuf;
                 return RenderResult::Skipped;
             }
         };
         let RenderOutputResult { sync, states, .. } = res;
+
+        if readback {
+            let result = (|| -> anyhow::Result<()> {
+                let mapping = renderer.copy_framebuffer(&target, region, Fourcc::Abgr8888)?;
+                let pixels = renderer.map_texture(&mapping)?;
+                consumer_target.write_rgba8(pixels)?;
+                Ok(())
+            })();
+            if let Err(err) = result {
+                warn!("anland: VirGL readback failed: {err:#}");
+                return RenderResult::Skipped;
+            }
+        }
 
         // The target borrows `dmabuf`; drop it now so we can store the dmabuf
         // back into the cache below.
@@ -1089,12 +1135,12 @@ impl Anland {
         // real fence the consumer presents a half-rendered buffer → flicker /
         // corruption under complex composites. Work around it by blocking on the
         // render fence CPU-side before handing the buffer over.
-        let fence = if sync.is_exportable() { sync.export() } else { None };
-        if fence.is_none() {
+        let fence = if !readback && sync.is_exportable() { sync.export() } else { None };
+        if !readback && fence.is_none() {
             if let Err(err) = sync.wait() {
                 warn!("anland: render fence wait failed: {err}");
                 self.buffer_last_rendered_frame[idx as usize] = u64::MAX;
-                self.consumer_dmabufs[idx as usize] = Some(dmabuf);
+                self.consumer_dmabufs[idx as usize] = dmabuf;
                 return RenderResult::Skipped;
             }
         }
@@ -1140,7 +1186,7 @@ impl Anland {
         // Keep the dmabuf (and thus the renderer's cached EGL image / texture /
         // renderbuffer for it) alive for the next time this buffer index is
         // selected, so we don't recreate EGL images every frame.
-        self.consumer_dmabufs[idx as usize] = Some(dmabuf);
+        self.consumer_dmabufs[idx as usize] = dmabuf;
 
         RenderResult::Submitted
     }

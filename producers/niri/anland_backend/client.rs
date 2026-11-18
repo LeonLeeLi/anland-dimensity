@@ -5,7 +5,7 @@ pub mod ffi;
 
 use std::ffi::CString;
 use std::io;
-use std::os::fd::{FromRawFd, OwnedFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::ptr::NonNull;
 
 pub use ffi::{InputEvent, Output, SceneEvent};
@@ -37,6 +37,28 @@ pub struct RenderTarget {
     pub offset: u32,
     pub modifier: u64,
     pub fd: OwnedFd,
+}
+
+impl RenderTarget {
+    pub fn write_rgba8(&self, pixels: &[u8]) -> io::Result<()> {
+        let target = ffi::Target {
+            generation: self.generation,
+            index: self.index,
+            count: self.count,
+            width: self.width,
+            height: self.height,
+            format: self.format,
+            stride: self.stride,
+            offset: self.offset,
+            modifier: self.modifier,
+            fd: self.fd.as_raw_fd(),
+        };
+        let result = unsafe { ffi::anland_niri_write_rgba8(&target, pixels.as_ptr(), pixels.len()) };
+        if result < 0 {
+            return Err(io::Error::from_raw_os_error(-result));
+        }
+        Ok(())
+    }
 }
 
 /// A scene event whose release fence, if any, closes on drop.

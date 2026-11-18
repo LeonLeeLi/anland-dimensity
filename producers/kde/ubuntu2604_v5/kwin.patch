@@ -38,11 +38,88 @@ diff -ruN a/src/inputmethod.h b/src/inputmethod.h
 diff -ruN a/src/backends/CMakeLists.txt b/src/backends/CMakeLists.txt
 --- a/src/backends/CMakeLists.txt	2026-05-12 18:26:46.000000000 +0800
 +++ b/src/backends/CMakeLists.txt	2026-06-21 16:16:45.502196971 +0800
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,7 @@
++set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/anland/anland_backend.cpp"
++    TARGET_DIRECTORY kwin APPEND PROPERTY COMPILE_DEFINITIONS ANLAND_KWIN_OPTIONAL_DRM)
 +add_subdirectory(anland)
++
  add_subdirectory(drm)
  add_subdirectory(fakeinput)
  add_subdirectory(libinput)
+diff --git a/src/compositor.cpp b/src/compositor.cpp
+--- a/src/compositor.cpp
++++ b/src/compositor.cpp
+@@ -131,7 +131,8 @@
+     QVariantHash gpuInformation;
+     gpuInformation[QStringLiteral("api_type")] = QStringLiteral("OpenGL");
+     gpuInformation[QStringLiteral("name")] = QString::fromUtf8(glPlatform->glRendererString());
+-    if (const auto pciInfo = backend->drmDevice()->pciDeviceInfo()) {
++    const auto *drmDevice = backend->drmDevice();
++    if (const auto pciInfo = drmDevice ? drmDevice->pciDeviceInfo() : std::nullopt) {
+         gpuInformation[QStringLiteral("id")] = QString::number(pciInfo->device_id, 16);
+         gpuInformation[QStringLiteral("vendor_id")] = QString::number(pciInfo->vendor_id, 16);
+     }
+diff --git a/src/plugins/qpa/window.cpp b/src/plugins/qpa/window.cpp
+--- a/src/plugins/qpa/window.cpp
++++ b/src/plugins/qpa/window.cpp
+@@ -56,6 +56,8 @@
+         if (software) {
+             static ShmGraphicsBufferAllocator shmAllocator;
+             allocator = &shmAllocator;
++        } else if (auto *drmDevice = Compositor::self()->backend()->drmDevice()) {
++            allocator = drmDevice->allocator();
+         } else {
+-            allocator = Compositor::self()->backend()->drmDevice()->allocator();
++            return nullptr;
+         }
+
+diff --git a/src/plugins/screencast/screencaststream.cpp b/src/plugins/screencast/screencaststream.cpp
+--- a/src/plugins/screencast/screencaststream.cpp
++++ b/src/plugins/screencast/screencaststream.cpp
+@@ -874,6 +874,7 @@
+ std::optional<ScreenCastDmaBufTextureParams> ScreenCastStream::testCreateDmaBuf(const QSize &size, quint32 format, const QList<uint64_t> &modifiers)
+ {
+     EglBackend *backend = qobject_cast<EglBackend *>(Compositor::self()->backend());
+-    if (!backend) {
++    auto *drmDevice = backend ? backend->drmDevice() : nullptr;
++    if (!drmDevice) {
+         return std::nullopt;
+     }
+@@ -881,5 +882,5 @@
+-    GraphicsBuffer *buffer = backend->drmDevice()->allocator()->allocate(GraphicsBufferOptions{
++    GraphicsBuffer *buffer = drmDevice->allocator()->allocate(GraphicsBufferOptions{
+         .size = size,
+         .format = format,
+         .modifiers = modifiers,
+     });
+@@ -917,6 +918,6 @@
+         .height = attrs->height,
+         .format = attrs->format,
+         .modifier = attrs->modifier,
+-        .supportsSyncObj = backend->drmDevice()->supportsSyncObjTimelines(),
++        .supportsSyncObj = drmDevice->supportsSyncObjTimelines(),
+     };
+ }
+diff --git a/src/wayland_server.cpp b/src/wayland_server.cpp
+--- a/src/wayland_server.cpp
++++ b/src/wayland_server.cpp
+@@ -858,5 +858,6 @@
+ void WaylandServer::setRenderBackend(RenderBackend *backend)
+ {
+-    if (backend->drmDevice()->supportsSyncObjTimelines()) {
++    auto *drmDevice = backend->drmDevice();
++    if (drmDevice && drmDevice->supportsSyncObjTimelines()) {
+         // ensure the DRM_IOCTL_SYNCOBJ_EVENTFD ioctl is supported
+         const auto linuxVersion = linuxKernelVersion();
+@@ -868,7 +869,7 @@
+             return;
+         }
+         if (!m_linuxDrmSyncObj) {
+-            m_linuxDrmSyncObj = new LinuxDrmSyncObjV1Interface(m_display, m_display, backend->drmDevice());
++            m_linuxDrmSyncObj = new LinuxDrmSyncObjV1Interface(m_display, m_display, drmDevice);
+         }
+     } else if (m_linuxDrmSyncObj) {
+         m_linuxDrmSyncObj->remove();
 diff -ruN a/src/main_wayland.cpp b/src/main_wayland.cpp
 --- a/src/main_wayland.cpp	2026-05-12 18:26:46.000000000 +0800
 +++ b/src/main_wayland.cpp	2026-06-21 16:16:45.502327729 +0800

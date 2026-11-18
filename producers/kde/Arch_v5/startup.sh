@@ -9,6 +9,10 @@
 set -euo pipefail
 
 SOCK="${1:-${ANLAND_SOCKET:-/run/display.sock}}"
+if [[ ${ANLAND_RENDERER:-} == virgl-vtest ]]; then
+    echo 'This KWin recipe requires a DRM render node. Use virtio-gpu.' >&2
+    exit 1
+fi
 KWIN_BIN="${KWIN_BIN:-kwin_wayland}"
 START_PLASMA="${START_PLASMA:-1}"
 [[ "$START_PLASMA" == 0 || "$START_PLASMA" == 1 ]] || {
@@ -62,13 +66,13 @@ fi
 exec 9>"$XDG_RUNTIME_DIR/anland-producer-session.lock"
 flock -n 9 || { echo 'Another Anland session entry is active' >&2; exit 1; }
 
-# kgsl/turnip (Adreno) environment
-export MESA_LOADER_DRIVER_OVERRIDE=kgsl
-export GALLIUM_DRIVER=kgsl
-export FD_FORCE_KGSL=1
-export MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE=1
-export FD_DEV_FEATURES=enable_tp_ubwc_flag_hint=1
-export ANLAND_SKIP_IMPLICIT_SYNC_WAIT=1
+if [[ -c /dev/kgsl-3d0 && -z ${ANLAND_RENDERER:-} ]]; then
+    export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
+    export GALLIUM_DRIVER="${GALLIUM_DRIVER:-kgsl}" FD_FORCE_KGSL="${FD_FORCE_KGSL:-1}"
+    export MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE="${MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE:-1}"
+    export FD_DEV_FEATURES="${FD_DEV_FEATURES:-enable_tp_ubwc_flag_hint=1}"
+    export ANLAND_SKIP_IMPLICIT_SYNC_WAIT="${ANLAND_SKIP_IMPLICIT_SYNC_WAIT:-1}"
+fi
 export XCURSOR_THEME=breeze_cursors
 export XCURSOR_SIZE=24
 export QT_QPA_PLATFORM=wayland

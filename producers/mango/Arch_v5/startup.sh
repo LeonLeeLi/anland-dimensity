@@ -20,6 +20,7 @@ export PATH="$PREFIX/bin:$PATH"
 # every Xwayland, panel and client process started by this session.
 private_lib=$PREFIX/lib
 export ANLAND=1 ANLAND_SOCKET=${ANLAND_SOCKET:-/run/display.sock}
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || die 'Mango requires a GBM render node. Use virtio-gpu.'
 export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
 export WLR_RENDER_DRM_DEVICE=${WLR_RENDER_DRM_DEVICE:-$ANLAND_DRM_DEVICE}
 export XWAYLAND_GBM_DEVICE=${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}

@@ -21,6 +21,7 @@
 #include "platformsupport/scenes/opengl/abstract_egl_backend.h"
 #endif
 
+#include <QByteArray>
 #include <QRegion>
 #include <array>
 #include <map>
@@ -130,6 +131,7 @@ private:
     void onOutputColorDescriptionChanged();
     bool createHdrRenderTarget(const QSize &size, const OutputTransform &transform);
     bool encodeHdrFrame(const QRegion &deviceDamage);
+    bool copySdrFrame();
 
     AnlandEglBackend *const m_backend;
     AnlandOutput *m_output;
@@ -144,6 +146,8 @@ private:
     int m_pendingFence = -1;
     std::array<std::shared_ptr<GLTexture>, ANLAND_DEVICE_MAX_BUFS> m_textures;
     std::array<std::unique_ptr<GLFramebuffer>, ANLAND_DEVICE_MAX_BUFS> m_fbos;
+    std::array<std::optional<anland_device_fb_t>, ANLAND_DEVICE_MAX_BUFS> m_readbackBuffers;
+    QByteArray m_readbackPixels;
     // The scene persists across consumer slot changes. Only its first frame or
     // an orientation or color change needs a full repaint; each consumer slot separately
     // accumulates the damage that still needs final PQ encoding.

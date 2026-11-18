@@ -114,6 +114,17 @@ int anland_niri_get_target(anland_niri_bridge *b, anland_niri_target *out)
     out->fd = fb.fd;
     return 0;
 }
+
+int anland_niri_write_rgba8(const anland_niri_target *target,
+                           const uint8_t *pixels, size_t size)
+{
+    const anland_device_fb_t fb = {
+        .fd = target->fd, .width = target->width, .height = target->height,
+        .stride = target->stride, .offset = target->offset,
+        .format = target->format, .modifier = target->modifier,
+    };
+    return anland_device_write_rgba8(&fb, pixels, size);
+}
 int anland_niri_submit(anland_niri_bridge *b, uint64_t generation,
                        uint32_t index, int fence, uint64_t *commit_id)
 {

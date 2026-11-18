@@ -48,6 +48,7 @@ fi
 [[ $(id -u) != 0 && $(uname -m) == aarch64 ]] || die 'requires an ordinary ARM64 user'
 GAMESCOPE_BIN=${GAMESCOPE_BIN:-/usr/bin/gamescope}
 export ANLAND_SOCKET=${ANLAND_SOCKET:-/run/display.sock}
+[[ ${ANLAND_RENDERER:-} != virgl-vtest ]] || die 'Gamescope requires Vulkan and external DMA-BUF support. VirGL vtest provides OpenGL.'
 export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
 export XWAYLAND_GBM_DEVICE=${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
@@ -78,7 +79,7 @@ for name in kwin_wayland gamescope gnome-shell niri Hyprland weston; do
 done
 # Select the backend on Gamescope only, not on games or nested compositors.
 unset ANLAND DISPLAY WAYLAND_DISPLAY QT_QPA_PLATFORM
-if [[ ${ANLAND_USE_ZINK:-1} == 1 ]]; then
+if [[ ${ANLAND_USE_ZINK:-1} == 1 && ${ANLAND_RENDERER:-} != virgl-drm ]]; then
     export MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-zink}
     export GALLIUM_DRIVER=${GALLIUM_DRIVER:-zink}
 fi

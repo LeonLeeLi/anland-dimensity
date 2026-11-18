@@ -30,9 +30,13 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/dma-buf.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* The public input struct must stay wire-compatible with the transport's
@@ -350,6 +354,66 @@ int anland_device_get_fb(anland_device *dev, int index, anland_device_fb_t *fb)
     fb->modifier = info.modifier;
     fb->offset   = info.offset;
     return 0;
+}
+
+static int sync_cpu_write(int fd, uint64_t phase)
+{
+    struct dma_buf_sync sync = { .flags = phase | DMA_BUF_SYNC_WRITE };
+    int result;
+    do {
+        result = ioctl(fd, DMA_BUF_IOCTL_SYNC, &sync);
+    } while (result < 0 && errno == EINTR);
+    return result;
+}
+
+int anland_device_write_rgba8(const anland_device_fb_t *fb,
+                             const uint8_t *pixels, size_t size)
+{
+    if (!fb || !pixels || !fb->width || !fb->height || fb->modifier != 0 ||
+        (fb->format != 1 && fb->format != 2 && fb->format != 5) ||
+        fb->width > fb->stride / 4 ||
+        fb->height > (SIZE_MAX - fb->offset) / fb->stride)
+        return -EINVAL;
+
+    const size_t row_bytes = (size_t)fb->width * 4;
+    const size_t length = (size_t)fb->offset + (size_t)fb->stride * fb->height;
+    if (size / fb->height < row_bytes)
+        return -EINVAL;
+
+    struct stat stat_buf;
+    if (fstat(fb->fd, &stat_buf) < 0)
+        return -errno;
+    if (stat_buf.st_size < 0 || (uintmax_t)stat_buf.st_size < length)
+        return -EINVAL;
+
+    void *mapping = mmap(NULL, length, PROT_WRITE, MAP_SHARED, fb->fd, 0);
+    if (mapping == MAP_FAILED)
+        return -errno;
+    if (sync_cpu_write(fb->fd, DMA_BUF_SYNC_START) < 0) {
+        const int error = errno;
+        munmap(mapping, length);
+        return -error;
+    }
+
+    uint8_t *destination = (uint8_t *)mapping + fb->offset;
+    for (uint32_t y = 0; y < fb->height; y++) {
+        uint8_t *dst = destination + y * (size_t)fb->stride;
+        const uint8_t *src = pixels + y * row_bytes;
+        if (fb->format == 1) {
+            memcpy(dst, src, row_bytes);
+            continue;
+        }
+        for (size_t x = 0; x < row_bytes; x += 4) {
+            dst[x] = src[x + (fb->format == 5 ? 2 : 0)];
+            dst[x + 1] = src[x + 1];
+            dst[x + 2] = src[x + (fb->format == 5 ? 0 : 2)];
+            dst[x + 3] = fb->format == 2 ? 255 : src[x + 3];
+        }
+    }
+
+    const int result = sync_cpu_write(fb->fd, DMA_BUF_SYNC_END) < 0 ? -errno : 0;
+    munmap(mapping, length);
+    return result;
 }
 
 int anland_device_current_fb(anland_device *dev)

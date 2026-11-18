@@ -10,8 +10,10 @@ esac
 [[ -x $BIN ]] || die "missing compositor: $BIN"
 command -v xwayland-satellite >/dev/null || die 'missing xwayland-satellite'
 export ANLAND=1 ANLAND_SOCKET=${ANLAND_SOCKET:-/run/display.sock}
-export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
-export XWAYLAND_GBM_DEVICE=${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}
+if [[ ${ANLAND_RENDERER:-} != virgl-vtest ]]; then
+    export ANLAND_DRM_DEVICE=${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}
+    export XWAYLAND_GBM_DEVICE=${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}
+fi
 export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
 [[ -d $XDG_RUNTIME_DIR && -O $XDG_RUNTIME_DIR && -w $XDG_RUNTIME_DIR ]] || die 'invalid runtime directory'
 [[ -S $ANLAND_SOCKET ]] || die 'missing Anland socket'

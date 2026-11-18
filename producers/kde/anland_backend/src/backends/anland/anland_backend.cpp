@@ -216,8 +216,6 @@ bool AnlandBackend::initialize()
     }
 
 #ifndef ANLAND_KWIN_68
-    // KWin dereferences renderBackend->drmDevice() during OpenGL compositor
-    // setup; without a real device it segfaults. Open one up front.
 #ifdef ANLAND_KWIN_67
     m_renderDevice = openRenderDevice();
     if (!m_renderDevice) {
@@ -225,8 +223,12 @@ bool AnlandBackend::initialize()
     m_drmDevice = openRenderDevice();
     if (!m_drmDevice) {
 #endif
+#ifdef ANLAND_KWIN_OPTIONAL_DRM
+        qCInfo(KWIN_ANLAND) << "no usable DRM render device; using surfaceless EGL without DRM";
+#else
         qCWarning(KWIN_ANLAND) << "no usable DRM render device; cannot bring up OpenGL compositing";
         return false;
+#endif
     }
 #endif
 

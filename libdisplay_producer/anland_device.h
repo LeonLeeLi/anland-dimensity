@@ -264,6 +264,11 @@ int anland_device_fb_count(anland_device *dev);
  * fd; caller owns and must close it). Returns 0 / -1. */
 int anland_device_get_fb(anland_device *dev, int index, anland_device_fb_t *fb);
 
+/* Copy tightly packed RGBA8 rows in framebuffer order into a linear SDR
+ * consumer buffer. Brackets the CPU write with DMA_BUF_IOCTL_SYNC. */
+int anland_device_write_rgba8(const anland_device_fb_t *fb,
+                             const uint8_t *pixels, size_t size);
+
 /* Additive native-import view: format is DRM fourcc, not the legacy protocol
  * value in get_fb(). Owned fd is always CLOEXEC. Other fields/ownership match
  * get_fb(). Existing consumers retain their original format semantics.

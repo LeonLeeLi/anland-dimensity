@@ -20,16 +20,17 @@ command -v xwayland-satellite >/dev/null 2>&1 || {
 export ANLAND=1
 export ANLAND_PRESENT_BACKEND=legacy
 export ANLAND_SOCKET="$SOCK"
-# Same KGSL/Turnip defaults as the legacy Arch producer launcher.
-export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
-export GALLIUM_DRIVER="${GALLIUM_DRIVER:-kgsl}"
-export FD_FORCE_KGSL="${FD_FORCE_KGSL:-1}"
-export MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE="${MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE:-1}"
-export FD_DEV_FEATURES="${FD_DEV_FEATURES:-enable_tp_ubwc_flag_hint=1}"
-export ANLAND_SKIP_IMPLICIT_SYNC_WAIT="${ANLAND_SKIP_IMPLICIT_SYNC_WAIT:-1}"
-export ANLAND_DRM_DEVICE="${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}"
-# Inherited by xwayland-satellite and its patched Xwayland child.
-export XWAYLAND_GBM_DEVICE="${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}"
+if [[ -c /dev/kgsl-3d0 && -z ${ANLAND_RENDERER:-} ]]; then
+    export MESA_LOADER_DRIVER_OVERRIDE="${MESA_LOADER_DRIVER_OVERRIDE:-kgsl}"
+    export GALLIUM_DRIVER="${GALLIUM_DRIVER:-kgsl}" FD_FORCE_KGSL="${FD_FORCE_KGSL:-1}"
+    export MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE="${MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE:-1}"
+    export FD_DEV_FEATURES="${FD_DEV_FEATURES:-enable_tp_ubwc_flag_hint=1}"
+    export ANLAND_SKIP_IMPLICIT_SYNC_WAIT="${ANLAND_SKIP_IMPLICIT_SYNC_WAIT:-1}"
+fi
+if [[ ${ANLAND_RENDERER:-} != virgl-vtest ]]; then
+    export ANLAND_DRM_DEVICE="${ANLAND_DRM_DEVICE:-/dev/dri/renderD128}"
+    export XWAYLAND_GBM_DEVICE="${XWAYLAND_GBM_DEVICE:-$ANLAND_DRM_DEVICE}"
+fi
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 [[ -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" ]] || { echo "Invalid runtime directory: $XDG_RUNTIME_DIR" >&2; exit 1; }
